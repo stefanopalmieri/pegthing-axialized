@@ -186,18 +186,6 @@
            (colorize "- " :red)))
     "   "))
 
-(defn row-positions
-  "Return all positions in the given row"
-  [row-num]
-  (range (inc (or (row-tri (dec row-num)) 0))
-         (inc (row-tri row-num))))
-
-(defn row-padding
-  "String of spaces to add to the beginning of a row to center it"
-  [row-num rows]
-  (let [pad-length (/ (* (- rows row-num) pos-chars) 2)]
-    (apply str (take pad-length (repeat " ")))))
-
 (defn board-bounds
   "Find the row/col boundaries of the board"
   [board]
@@ -251,7 +239,7 @@
   (println "\nHere's your board:")
   (print-board board)
   (println "Move from where to where? Enter two letters:")
-  (let [input (map letter->coord (characters-as-strings (get-input)))]
+  (let [input (map (partial letter->coord board) (characters-as-strings (get-input)))]
     (if-let [new-board (make-move board (first input) (second input))]
       (successful-move new-board)
       (do
@@ -282,7 +270,7 @@
   (println "Here's your board:")
   (print-board board)
   (println "Remove which peg? [e]")
-  (prompt-move (remove-peg board (letter->coord (get-input "e")))))
+  (prompt-move (remove-peg board (letter->coord board (get-input "e")))))
 
 (defn prompt-rows
   []
