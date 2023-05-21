@@ -34,11 +34,13 @@
 
 (defn axial-to-oddr
   [{:keys [q r]}]
-  ;;{:q q :r r}
   (let [col (+ q (/ (- r (if (odd? r) 1 0)) 2))]
-    {:col col :row r}
-    )
-  )
+    {:col col :row r}))
+
+(defn oddr-to-axial
+  [{:keys [col row]}]
+  (let [q (- col (/ (- row (if (odd? row) 1 0)) 2))]
+    {:q q :r row}))
 
 (def axial-ordinals
   {:left  {:q -1 :r 1}
@@ -177,10 +179,12 @@
 
 (defn render-coord
   [board coord]
-  (str (nth letters (get-in board [coord :order]))
-       (if (get-in board [coord :pegged])
-         (colorize "0" :blue)
-         (colorize "-" :red))))
+  (if (board coord)
+    (str (nth letters (get-in board [coord :order]))
+         (if (get-in board [coord :pegged])
+           (colorize "0 " :blue)
+           (colorize "- " :red)))
+    "   "))
 
 (defn row-positions
   "Return all positions in the given row"
@@ -194,16 +198,26 @@
   (let [pad-length (/ (* (- rows row-num) pos-chars) 2)]
     (apply str (take pad-length (repeat " ")))))
 
-#_
-(defn render-row
-  [board row-num]
-  (str (row-padding row-num (:rows board))
-       (clojure.string/join " " (map (partial render-pos board) (row-positions row-num)))))
+(defn board-bounds
+  "Find the row/col boundaries of the board"
+  [board]
+  (let [oddrs (map axial-to-oddr (keys board))]
+    {:mincol (apply min (map #(% :col) oddrs))
+     :minrow (apply min (map #(% :row) oddrs))
+     :maxcol (apply max (map #(% :col) oddrs))
+     :maxrow (apply max (map #(% :row) oddrs))
+     }))
 
 (defn print-board
   [board]
-  (doseq [row-num (range 1 (inc (:rows board)))]
-    (println (render-row board row-num))))
+  (let [bounds (board-bounds board)]
+    ;; iterate by row-col order and print
+    (doseq [row-num (range (bounds :minrow) (inc (bounds :maxrow)))]
+      (if (odd? row-num) (print "  "))
+      (doseq [col-num (range (bounds :mincol) (inc (bounds :maxcol)))]
+        (print (str " " (render-coord board (oddr-to-axial {:row row-num :col col-num}))))
+        )
+      (println ""))))
 
 ;;;;
 ;; Interaction
