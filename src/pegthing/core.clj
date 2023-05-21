@@ -1,88 +1,99 @@
 (ns pegthing.core
-  (require [clojure.set :as set])
   (:gen-class))
 
 (declare successful-move prompt-move game-over prompt-rows)
 
 ;;;;
+;; Define axial operations
+;;;;
+(defn axial-add
+  [p1 p2]
+  {:q (+ (p1 :q) (p2 :q)) :r (+ (p1 :r) (p2 :r))}
+  )
+
+(defn axial-scale
+  [p s]
+  {:q (int (* s (p :q))) :r (int (* s (p :r)))}
+  )
+
+(defn axial-subtract
+  [p1 p2]
+  (axial-add p1 (axial-scale p2 -1))
+  )
+
+(defn axial-distance
+  "Calculate the distance between two axial coordinates"
+  [p1 p2]
+  (let [diff-vec (axial-subtract p1 p2)]
+    (/ (+
+        (abs (diff-vec :q))
+        (abs (+ (diff-vec :q) (diff-vec :r)))
+        (abs (diff-vec :r))
+        ) 2)
+    ))
+
+(defn axial-to-oddr
+  [{:keys [q r]}]
+  ;;{:q q :r r}
+  (let [col (+ q (/ (- r (if (odd? r) 1 0)) 2))]
+    {:col col :row r}
+    )
+  )
+
+(def axial-ordinals
+  {:left  {:q -1 :r 1}
+   :right {:q 1 :r 0}
+   :up-left {:q 0 :r -1}
+   :up-right {:q 1 :r -1}
+   :down-left {:q -1 :r 1}
+   :down-right {:q 0 :r 1}})
+
+(defn adjacent
+  "Return the adjacent coordinate in the given direction"
+  [p ord]
+  (axial-add p (axial-ordinals ord)))
+
+;;;;
 ;; Create the board
 ;;;;
-(defn tri*
-  "Generates lazy sequence of triangular numbers"
-  ([] (tri* 0 1))
-  ([sum n]
-     (let [new-sum (+ sum n)]
-       (cons new-sum (lazy-seq (tri* new-sum (inc n)))))))
+(defn pegify-board
+  [board]
+  (update-vals board #(assoc % :pegged true)))
 
-(def tri (tri*))
+(defn tagged-order-assoc
+  "Given a key and a map of keys->order,
+  insert the key if it is not already in the collection.
+  Assume the order is zero-indexed."
+  [coll key]
+  (if (contains? coll key)
+    coll
+    (assoc coll key {:order (count coll)})))
 
-(defn triangular?
-  "Is the number triangular? e.g. 1, 3, 6, 10, 15, etc"
-  [n]
-  (= n (last (take-while #(>= n %) tri))))
-
-(defn row-tri
-  "The triangular number at the end of row n"
-  [n]
-  (last (take n tri)))
-
-(defn row-num
-  "Returns row number the position belongs to: pos 1 in row 1,
-  positions 2 and 3 in row 2, etc"
-  [pos]
-  (inc (count (take-while #(> pos %) tri))))
-
-(defn in-bounds?
-  "Is every position less than or equal the max position?"
-  [max-pos & positions]
-  (= max-pos (apply max max-pos positions)))
-
-(defn connect
-  "Form a mutual connection between two positions"
-  [board max-pos pos neighbor destination]
-  (if (in-bounds? max-pos neighbor destination)
-    (reduce (fn [new-board [p1 p2]] (assoc-in new-board [p1 :connections p2] neighbor))
-            board
-            [[pos destination] [destination pos]])
-    board))
-
-(defn connect-right
-  [board max-pos pos]
-  (let [neighbor (inc pos)
-        destination (inc neighbor)]
-    (if-not (or (triangular? neighbor) (triangular? pos))
-      (connect board max-pos pos neighbor destination)
-      board)))
-
-(defn connect-down-left
-  [board max-pos pos]
-  (let [row (row-num pos)
-        neighbor (+ row pos)
-        destination (+ 1 row neighbor)]
-    (connect board max-pos pos neighbor destination)))
-
-(defn connect-down-right
-  [board max-pos pos]
-  (let [row (row-num pos)
-        neighbor (+ 1 row pos)
-        destination (+ 2 row neighbor)]
-    (connect board max-pos pos neighbor destination)))
-
-(defn add-pos
-  "Pegs the position and performs connections"
-  [board max-pos pos]
-  (let [pegged-board (assoc-in board [pos :pegged] true)]
-    (reduce (fn [new-board connector] (connector new-board max-pos pos))
-            pegged-board
-            [connect-right connect-down-left connect-down-right])))
+(defn build-triangle
+  "Create a triangle to the given depth with axial coordinates
+  represented as a map of coordinates->order.
+  "
+  ([depth]
+   (if (> depth 0)
+     (let [coords {:q (- depth 1) :r 0}]
+       (build-triangle depth [coords] (tagged-order-assoc {} coords)))
+     )
+   )
+  ([depth queue coll]
+   (if (empty? queue)
+     coll 
+     (let [[head & remaining] queue]
+       (if (= (- depth (:r head)) 1)
+         coll
+         (recur depth
+                (conj (vec remaining) (adjacent head :down-left) (adjacent head :down-right))
+                (tagged-order-assoc (tagged-order-assoc coll (adjacent head :down-left)) (adjacent head :down-right))
+                ))))))
 
 (defn new-board
   [rows]
-  (let [initial-board {:rows rows}
-        max-pos (row-tri rows)]
-    (reduce (fn [board pos] (add-pos board max-pos pos))
-            initial-board
-            (range 1 (inc max-pos)))))
+  (pegify-board (build-triangle rows)))
+
 ;;;;
 ;; Move pegs
 ;;;;
@@ -91,21 +102,27 @@
   [board pos]
   (get-in board [pos :pegged]))
 
-(defn valid-moves
-  "Return a map of all valid moves for pos, where the key is the
-  destination and the value is the jumped position"
-  [board pos]
-  (into {}
-        (filter (fn [[destination jumped]]
-                  (and (not (pegged? board destination))
-                       (pegged? board jumped)))
-                (get-in board [pos :connections]))))
-
 (defn valid-move?
   "Return jumped position if the move from p1 to p2 is valid, nil
   otherwise"
   [board p1 p2]
-  (get (valid-moves board p1) p2))
+  (if (and (board p1)
+           (board p2)
+           (= (axial-distance p1 p2) 2)
+           (pegged? board p1)
+           (not (pegged? board p2)))
+    ;; calculate the coordinates of the jumped peg
+    (let [jumped (axial-add p1 (axial-scale (axial-subtract p2 p1) 1/2))]
+      (if (pegged? board jumped) jumped))))
+
+(defn valid-moves
+  "Return a map of all valid moves for pos, where the key is the
+  destination and the value is the jumped position"
+  [board pos]
+  (let [destinations (map #(axial-add pos (axial-scale % 2)) (vals axial-ordinals))]
+    (into {} (filter second
+                     (zipmap destinations (map #(valid-move? board pos %) destinations))
+                     ))))
 
 (defn remove-peg
   "Take the peg at given position out of the board"
@@ -158,10 +175,10 @@
   [text color]
   (str (ansi color) text (ansi :reset)))
 
-(defn render-pos
-  [board pos]
-  (str (nth letters (dec pos))
-       (if (get-in board [pos :pegged])
+(defn render-coord
+  [board coord]
+  (str (nth letters (get-in board [coord :order]))
+       (if (get-in board [coord :pegged])
          (colorize "0" :blue)
          (colorize "-" :red))))
 
@@ -177,6 +194,7 @@
   (let [pad-length (/ (* (- rows row-num) pos-chars) 2)]
     (apply str (take pad-length (repeat " ")))))
 
+#_
 (defn render-row
   [board row-num]
   (str (row-padding row-num (:rows board))
@@ -190,10 +208,14 @@
 ;;;;
 ;; Interaction
 ;;;;
-(defn letter->pos
-  "Converts a letter string to the corresponding position number"
-  [letter]
-  (inc (- (int (first letter)) alpha-start)))
+(defn letter->coord
+  "Converts a letter string to the corresponding coordinate"
+  [board letter]
+  ;; calculate the order corresponding to the letter
+  (let [order (- (int (first letter)) alpha-start)]
+    ;; find the coordinate with order
+    (first (first (filter (fn [[coord attrs]] (= (attrs :order) order)) board)))
+    ))
 
 (defn get-input
   "Waits for user to enter text and hit enter, then cleans the input"
@@ -215,7 +237,7 @@
   (println "\nHere's your board:")
   (print-board board)
   (println "Move from where to where? Enter two letters:")
-  (let [input (map letter->pos (characters-as-strings (get-input)))]
+  (let [input (map letter->coord (characters-as-strings (get-input)))]
     (if-let [new-board (make-move board (first input) (second input))]
       (successful-move new-board)
       (do
@@ -246,7 +268,7 @@
   (println "Here's your board:")
   (print-board board)
   (println "Remove which peg? [e]")
-  (prompt-move (remove-peg board (letter->pos (get-input "e")))))
+  (prompt-move (remove-peg board (letter->coord (get-input "e")))))
 
 (defn prompt-rows
   []
